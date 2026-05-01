@@ -33,6 +33,20 @@
 
 Claudex is a unified proxy that lets [Claude Code](https://docs.anthropic.com/en/docs/claude-code) seamlessly work with multiple AI providers through automatic protocol translation.
 
+## Claudex5
+
+This fork adds a standalone `claudex5` executable for using `gpt-5.5` through ChatGPT/Codex OAuth subscriptions. It injects a `codex-sub` profile automatically, so no local `claudex.toml` is required for the default path.
+
+```bash
+cargo install --git https://github.com/gonos2k/claudex5 --bin claudex5 --force
+
+# Interactive
+claudex5
+
+# One-shot
+claudex5 -p "너는 누구야? 한 문장으로 답해줘."
+```
+
 ## Features
 
 - **Multi-provider proxy** — DirectAnthropic passthrough + Anthropic <-> OpenAI Chat Completions translation + Anthropic <-> Responses API translation

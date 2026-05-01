@@ -29,3 +29,6 @@ config.toml
 # Internal docs and scripts (local only)
 /docs/
 scripts/
+
+# Local agent/runtime state
+.omx/

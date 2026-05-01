@@ -199,7 +199,7 @@ pub fn anthropic_to_openai(
                     "function": {
                         "name": truncated,
                         "description": tool.get("description").unwrap_or(&json!("")),
-                        "parameters": tool.get("input_schema").unwrap_or(&json!({})),
+                        "parameters": normalize_tool_parameters(tool.get("input_schema")),
                     }
                 })
             })
@@ -363,6 +363,29 @@ fn convert_content_to_openai(content: Option<&Value>) -> Value {
         }
         Some(other) => other.clone(),
     }
+}
+
+fn normalize_tool_parameters(schema: Option<&Value>) -> Value {
+    let mut parameters = schema.cloned().unwrap_or_else(|| json!({"type": "object"}));
+
+    if !parameters.is_object() {
+        return json!({
+            "type": "object",
+            "properties": {},
+        });
+    }
+
+    if parameters.get("type").and_then(|v| v.as_str()).is_none() {
+        parameters["type"] = json!("object");
+    }
+
+    if parameters.get("type").and_then(|v| v.as_str()) == Some("object")
+        && parameters.get("properties").is_none()
+    {
+        parameters["properties"] = json!({});
+    }
+
+    parameters
 }
 
 fn extract_tool_result_content(block: &Value) -> String {
@@ -666,6 +689,21 @@ mod tests {
         assert_eq!(tool["function"]["name"], "get_weather");
         assert_eq!(tool["function"]["description"], "Get weather info");
         assert!(tool["function"]["parameters"]["properties"]["city"].is_object());
+    }
+
+    #[test]
+    fn test_tool_parameters_add_empty_properties() {
+        let req = json!({
+            "messages": [],
+            "tools": [{
+                "name": "no_args",
+                "input_schema": {"type": "object"}
+            }]
+        });
+        let result = a2o(&req, "m");
+        let params = &result["tools"][0]["function"]["parameters"];
+        assert_eq!(params["type"], "object");
+        assert_eq!(params["properties"], json!({}));
     }
 
     // --- tool_choice: string shorthand ---

@@ -13,6 +13,9 @@ mod tui;
 mod update;
 mod util;
 
+use std::ffi::OsString;
+use std::path::Path;
+
 use anyhow::Result;
 use clap::Parser;
 use tracing_subscriber::layer::SubscriberExt;
@@ -20,13 +23,17 @@ use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
 
 use cli::{AuthAction, Cli, Commands, ProfileAction, ProxyAction, SetsAction};
-use config::ClaudexConfig;
+use config::{ClaudexConfig, ProfileConfig, ProfileModels, ProviderType};
+use oauth::{AuthType, OAuthProvider};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = Cli::parse();
+    let cli = parse_cli();
 
     let mut config = ClaudexConfig::load(cli.config.as_deref())?;
+    if invoked_as_claudex5() {
+        ensure_claudex5_profile(&mut config);
+    }
 
     // `claudex run` 时 proxy 日志只写文件，不污染 Claude Code 终端输出
     let is_run_command = matches!(&cli.command, Some(Commands::Run { .. }));
@@ -257,4 +264,164 @@ async fn start_proxy_background(config: &ClaudexConfig) -> Result<()> {
     }
 
     anyhow::bail!("proxy failed to start within 2 seconds")
+}
+
+fn parse_cli() -> Cli {
+    let args: Vec<OsString> = std::env::args_os().collect();
+    Cli::parse_from(default_claudex5_args(args))
+}
+
+fn invoked_as_claudex5() -> bool {
+    std::env::args_os()
+        .next()
+        .is_some_and(|program| is_claudex5_program(&program))
+}
+
+fn default_claudex5_args(args: Vec<OsString>) -> Vec<OsString> {
+    if !should_default_claudex5_to_codex_sub(&args) {
+        return args;
+    }
+
+    let mut rewritten = Vec::with_capacity(args.len() + 4);
+    if let Some(program) = args.first() {
+        rewritten.push(program.clone());
+    }
+    rewritten.push("run".into());
+    rewritten.push("codex-sub".into());
+    rewritten.push("--setting-sources".into());
+    rewritten.push("project,local".into());
+    rewritten.extend(args.into_iter().skip(1));
+    rewritten
+}
+
+fn should_default_claudex5_to_codex_sub(args: &[OsString]) -> bool {
+    let Some(program) = args.first() else {
+        return false;
+    };
+    if !is_claudex5_program(program) {
+        return false;
+    }
+
+    match args.get(1).and_then(|arg| arg.to_str()) {
+        None => true,
+        Some("-h" | "--help" | "-V" | "--version" | "help") => false,
+        Some("run" | "profile" | "proxy" | "dashboard" | "config" | "update" | "auth" | "sets") => {
+            false
+        }
+        Some(_) => true,
+    }
+}
+
+fn is_claudex5_program(program: &OsString) -> bool {
+    let stem = Path::new(program)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or_default();
+    stem == "claudex5"
+}
+
+fn ensure_claudex5_profile(config: &mut ClaudexConfig) {
+    if config.find_profile("codex-sub").is_some() {
+        return;
+    }
+
+    let model = "gpt-5.5".to_string();
+    config.profiles.push(ProfileConfig {
+        name: "codex-sub".to_string(),
+        provider_type: ProviderType::OpenAIResponses,
+        base_url: "https://chatgpt.com/backend-api/codex".to_string(),
+        default_model: model.clone(),
+        auth_type: AuthType::OAuth,
+        oauth_provider: Some(OAuthProvider::Openai),
+        models: ProfileModels {
+            haiku: Some(model.clone()),
+            sonnet: Some(model.clone()),
+            opus: Some(model),
+        },
+        ..ProfileConfig::default()
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn os_args(args: &[&str]) -> Vec<OsString> {
+        args.iter().map(OsString::from).collect()
+    }
+
+    #[test]
+    fn claudex5_without_command_defaults_to_codex_sub() {
+        let args = default_claudex5_args(os_args(&["claudex5"]));
+        assert_eq!(
+            args,
+            os_args(&[
+                "claudex5",
+                "run",
+                "codex-sub",
+                "--setting-sources",
+                "project,local"
+            ])
+        );
+    }
+
+    #[test]
+    fn claudex5_prompt_args_default_to_codex_sub() {
+        let args = default_claudex5_args(os_args(&["claudex5", "-p", "hi"]));
+        assert_eq!(
+            args,
+            os_args(&[
+                "claudex5",
+                "run",
+                "codex-sub",
+                "--setting-sources",
+                "project,local",
+                "-p",
+                "hi"
+            ])
+        );
+    }
+
+    #[test]
+    fn claudex5_explicit_subcommand_is_preserved() {
+        let args = default_claudex5_args(os_args(&["claudex5", "profile", "list"]));
+        assert_eq!(args, os_args(&["claudex5", "profile", "list"]));
+    }
+
+    #[test]
+    fn claudex_binary_is_preserved() {
+        let args = default_claudex5_args(os_args(&["claudex", "-p", "hi"]));
+        assert_eq!(args, os_args(&["claudex", "-p", "hi"]));
+    }
+
+    #[test]
+    fn claudex5_profile_is_injected_when_missing() {
+        let mut config = ClaudexConfig::default();
+
+        ensure_claudex5_profile(&mut config);
+
+        let profile = config.find_profile("codex-sub").unwrap();
+        assert_eq!(profile.default_model, "gpt-5.5");
+        assert_eq!(profile.provider_type, ProviderType::OpenAIResponses);
+        assert_eq!(profile.auth_type, AuthType::OAuth);
+        assert_eq!(profile.oauth_provider, Some(OAuthProvider::Openai));
+    }
+
+    #[test]
+    fn claudex5_profile_injection_keeps_existing_profile() {
+        let mut config = ClaudexConfig::default();
+        config.profiles.push(ProfileConfig {
+            name: "codex-sub".to_string(),
+            default_model: "custom".to_string(),
+            ..ProfileConfig::default()
+        });
+
+        ensure_claudex5_profile(&mut config);
+
+        assert_eq!(config.profiles.len(), 1);
+        assert_eq!(
+            config.find_profile("codex-sub").unwrap().default_model,
+            "custom"
+        );
+    }
 }

@@ -3,8 +3,10 @@ use std::time::{Duration, Instant};
 
 use anyhow::{bail, Result};
 use reqwest::Client;
+use serde_json::json;
 
 use super::{ClaudexConfig, ProfileConfig, ProviderType};
+use crate::oauth::{AuthType, OAuthProvider};
 
 pub async fn list_profiles(config: &ClaudexConfig) {
     if config.profiles.is_empty() {
@@ -76,43 +78,97 @@ pub async fn test_profile(config: &ClaudexConfig, name: &str) -> Result<()> {
 
 pub async fn test_connectivity(profile: &ProfileConfig) -> Result<u128> {
     let client = Client::builder().timeout(Duration::from_secs(10)).build()?;
+    let mut profile = profile.clone();
+
+    if profile.auth_type == AuthType::OAuth {
+        let provider = profile
+            .oauth_provider
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("no oauth_provider for profile '{}'", profile.name))?
+            .normalize();
+        let mut token = crate::oauth::source::load_credential_chain(&provider)
+            .map(|cred| cred.into_oauth_token())?;
+        if token.is_expired(60) {
+            match (&provider, token.refresh_token.as_deref()) {
+                (OAuthProvider::Chatgpt | OAuthProvider::Openai, Some(refresh_token)) => {
+                    token = crate::oauth::exchange::refresh_chatgpt_token(&client, refresh_token)
+                        .await?;
+                }
+                _ => {
+                    bail!(
+                        "OAuth token expired for '{}' and cannot be refreshed automatically",
+                        profile.name
+                    );
+                }
+            }
+        }
+        crate::oauth::manager::apply_token_to_profile(&mut profile, &token);
+    }
 
     let start = Instant::now();
 
-    let url = match profile.provider_type {
+    let resp = match profile.provider_type {
         ProviderType::DirectAnthropic => {
-            format!("{}/v1/models", profile.base_url.trim_end_matches('/'))
-        }
-        ProviderType::OpenAICompatible => {
-            format!("{}/models", profile.base_url.trim_end_matches('/'))
-        }
-        ProviderType::OpenAIResponses => {
-            // Responses API 没有 /models 端点，直接发一个轻量请求验证连通性
-            format!("{}/models", profile.base_url.trim_end_matches('/'))
-        }
-    };
-
-    let mut req = client.get(&url);
-    if !profile.api_key.is_empty() {
-        match profile.provider_type {
-            ProviderType::DirectAnthropic => {
+            let url = format!("{}/v1/models", profile.base_url.trim_end_matches('/'));
+            let mut req = client.get(&url);
+            if !profile.api_key.is_empty() {
                 req = req.header("x-api-key", &profile.api_key);
                 req = req.header("anthropic-version", "2023-06-01");
             }
-            ProviderType::OpenAICompatible | ProviderType::OpenAIResponses => {
+            apply_custom_headers(req, &profile).send().await?
+        }
+        ProviderType::OpenAICompatible => {
+            let url = format!("{}/models", profile.base_url.trim_end_matches('/'));
+            let mut req = client.get(&url);
+            if !profile.api_key.is_empty() {
                 req = req.header("Authorization", format!("Bearer {}", profile.api_key));
             }
+            apply_custom_headers(req, &profile).send().await?
         }
-    }
-
-    let resp = req.send().await?;
+        ProviderType::OpenAIResponses => {
+            let url = format!("{}/responses", profile.base_url.trim_end_matches('/'));
+            let mut req = client.post(&url).json(&json!({
+                "model": profile.default_model,
+                "instructions": "You are a concise connectivity test assistant.",
+                "input": [{
+                    "type": "message",
+                    "role": "user",
+                    "content": [{
+                        "type": "input_text",
+                        "text": "Reply with OK."
+                    }]
+                }],
+                "stream": true,
+                "store": false
+            }));
+            if !profile.api_key.is_empty() {
+                req = req.header("Authorization", format!("Bearer {}", profile.api_key));
+            }
+            if let Some(account_id) = profile.extra_env.get("CHATGPT_ACCOUNT_ID") {
+                req = req.header("ChatGPT-Account-ID", account_id.as_str());
+            }
+            apply_custom_headers(req, &profile).send().await?
+        }
+    };
     let latency = start.elapsed().as_millis();
 
     if !resp.status().is_success() {
-        bail!("HTTP {}", resp.status());
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        bail!("HTTP {status}: {body}");
     }
 
     Ok(latency)
+}
+
+fn apply_custom_headers(
+    mut req: reqwest::RequestBuilder,
+    profile: &ProfileConfig,
+) -> reqwest::RequestBuilder {
+    for (key, value) in &profile.custom_headers {
+        req = req.header(key.as_str(), value.as_str());
+    }
+    req
 }
 
 pub fn add_profile(config: &mut ClaudexConfig, profile: ProfileConfig) -> Result<()> {

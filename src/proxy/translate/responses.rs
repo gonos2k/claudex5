@@ -189,7 +189,10 @@ pub fn anthropic_to_responses(
         let resp_tools: Vec<Value> = tools
             .iter()
             .map(|tool| {
-                let name = tool.get("name").and_then(|n| n.as_str()).unwrap_or("unknown");
+                let name = tool
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("unknown");
                 let truncated = truncate_tool_name(name);
                 if truncated != name {
                     tool_name_map.insert(truncated.clone(), name.to_string());
@@ -198,7 +201,7 @@ pub fn anthropic_to_responses(
                     "type": "function",
                     "name": truncated,
                     "description": tool.get("description").cloned().unwrap_or(json!("")),
-                    "parameters": tool.get("input_schema").cloned().unwrap_or(json!({"type": "object"})),
+                    "parameters": normalize_tool_parameters(tool.get("input_schema")),
                 })
             })
             .collect();
@@ -374,6 +377,29 @@ fn extract_tool_result_content(block: &Value) -> String {
     }
 }
 
+fn normalize_tool_parameters(schema: Option<&Value>) -> Value {
+    let mut parameters = schema.cloned().unwrap_or_else(|| json!({"type": "object"}));
+
+    if !parameters.is_object() {
+        return json!({
+            "type": "object",
+            "properties": {},
+        });
+    }
+
+    if parameters.get("type").and_then(|v| v.as_str()).is_none() {
+        parameters["type"] = json!("object");
+    }
+
+    if parameters.get("type").and_then(|v| v.as_str()) == Some("object")
+        && parameters.get("properties").is_none()
+    {
+        parameters["properties"] = json!({});
+    }
+
+    parameters
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -436,6 +462,20 @@ mod tests {
         let tools = body["tools"].as_array().unwrap();
         assert_eq!(tools[0]["type"], "function");
         assert_eq!(tools[0]["name"], "get_weather");
+    }
+
+    #[test]
+    fn test_tool_parameters_add_empty_properties() {
+        let anthropic = json!({
+            "messages": [],
+            "tools": [
+                {"name": "no_args", "input_schema": {"type": "object"}}
+            ]
+        });
+
+        let (body, _) = anthropic_to_responses(&anthropic, "gpt-5.5").unwrap();
+        assert_eq!(body["tools"][0]["parameters"]["type"], "object");
+        assert_eq!(body["tools"][0]["parameters"]["properties"], json!({}));
     }
 
     #[test]
