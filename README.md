@@ -1,17 +1,15 @@
 <p align="center">
-  <h1 align="center">Claudex</h1>
-  <p align="center">Multi-instance Claude Code manager with intelligent translation proxy</p>
+  <h1 align="center">Claudex5</h1>
+  <p align="center">Standalone <code>gpt-5.5</code> launcher for Claude Code through ChatGPT/Codex OAuth subscriptions</p>
 </p>
 
 <p align="center">
-  <a href="https://github.com/StringKe/claudex/actions/workflows/ci.yml"><img src="https://github.com/StringKe/claudex/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/StringKe/claudex/releases"><img src="https://github.com/StringKe/claudex/actions/workflows/release.yml/badge.svg" alt="Release"></a>
-  <a href="https://github.com/StringKe/claudex/blob/main/LICENSE"><img src="https://img.shields.io/github/license/StringKe/claudex" alt="License"></a>
-  <a href="https://github.com/StringKe/claudex/releases"><img src="https://img.shields.io/github/v/release/StringKe/claudex" alt="Latest Release"></a>
+  <a href="https://github.com/gonos2k/claudex5/actions/workflows/ci.yml"><img src="https://github.com/gonos2k/claudex5/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/gonos2k/claudex5/blob/main/LICENSE"><img src="https://img.shields.io/github/license/gonos2k/claudex5" alt="License"></a>
 </p>
 
 <p align="center">
-  <a href="https://stringke.github.io/claudex/">Documentation</a>
+  Based on <a href="https://github.com/StringKe/claudex">StringKe/claudex</a>
 </p>
 
 <p align="center">
@@ -31,23 +29,108 @@
 
 ---
 
-Claudex is a unified proxy that lets [Claude Code](https://docs.anthropic.com/en/docs/claude-code) seamlessly work with multiple AI providers through automatic protocol translation.
+Claudex5 is a focused fork of [Claudex](https://github.com/StringKe/claudex). It keeps Claudex's Anthropic-to-OpenAI Responses proxy, but makes one path the default: run [Claude Code](https://docs.anthropic.com/en/docs/claude-code) against `gpt-5.5` through a ChatGPT/Codex OAuth subscription.
 
-## Claudex5
+## Why Claudex5
 
-This fork adds a standalone `claudex5` executable for using `gpt-5.5` through ChatGPT/Codex OAuth subscriptions. It injects a `codex-sub` profile automatically, so no local `claudex.toml` is required for the default path.
+Claudex is a multi-provider proxy. Claudex5 is intentionally narrower: it is meant to make `gpt-5.5` usable from Claude Code with as little configuration as possible.
+
+| Area | Upstream Claudex | Claudex5 |
+|------|------------------|----------|
+| Main command | `claudex run <profile>` | `claudex5` |
+| Default target | User-configured profile | Auto-injected `codex-sub` profile |
+| Default model | Profile-dependent | `gpt-5.5` |
+| Auth path | API keys and many OAuth providers | ChatGPT/Codex OAuth subscription by default |
+| Config requirement | Usually needs a profile in config | No local `claudex.toml` needed for the default path |
+| Claude settings | Uses normal Claude settings unless arguments are passed | Default invocation passes `--setting-sources project,local` to avoid incompatible global plugins |
+| Tool schema handling | Upstream behavior | Normalizes empty object tool schemas for OpenAI Responses compatibility |
+
+The original `claudex` behavior is still present in the codebase. The new `claudex5` binary is the opinionated, single-purpose entry point.
+
+## Installation
+
+Install from this repository:
 
 ```bash
 cargo install --git https://github.com/gonos2k/claudex5 --bin claudex5 --force
+```
 
-# Interactive
+Build locally:
+
+```bash
+git clone https://github.com/gonos2k/claudex5
+cd claudex5
+cargo build --release --bin claudex5
+install -m 755 target/release/claudex5 ~/.local/bin/claudex5
+```
+
+## Requirements
+
+- Claude Code must be installed and available as `claude`.
+- ChatGPT/Codex OAuth credentials must be available. Claudex5 reads `~/.codex/auth.json` by default, or you can log in through Claudex5:
+
+```bash
+claudex5 auth login openai --profile codex-sub
+```
+
+For SSH or no-browser environments:
+
+```bash
+claudex5 auth login openai --profile codex-sub --headless
+```
+
+## Usage
+
+Interactive Claude Code session:
+
+```bash
 claudex5
+```
 
-# One-shot
+One-shot prompt:
+
+```bash
 claudex5 -p "너는 누구야? 한 문장으로 답해줘."
 ```
 
-## Features
+Pass normal Claude Code arguments after `claudex5`:
+
+```bash
+claudex5 --resume <session-id>
+claudex5 --dangerously-skip-permissions
+```
+
+Inspect the injected profile:
+
+```bash
+claudex5 profile list
+```
+
+The default `claudex5 ...` form is equivalent to:
+
+```bash
+claudex run codex-sub --setting-sources project,local ...
+```
+
+## Troubleshooting
+
+If auth is missing or expired:
+
+```bash
+claudex5 auth status
+claudex5 auth refresh codex-sub
+claudex5 auth login openai --profile codex-sub --force
+```
+
+If you see an OpenAI error about an MCP tool schema, use the default `claudex5` command instead of manually running `claudex run ...`. The default path excludes global Claude settings with `--setting-sources project,local`, which avoids unrelated global plugins such as Firebase MCP tools.
+
+Proxy logs are written under the Claudex runtime cache, for example on macOS:
+
+```bash
+ls -lt ~/Library/Caches/claudex
+```
+
+## Inherited Claudex Features
 
 - **Multi-provider proxy** — DirectAnthropic passthrough + Anthropic <-> OpenAI Chat Completions translation + Anthropic <-> Responses API translation
 - **20+ providers** — Anthropic, OpenRouter, Grok, OpenAI, DeepSeek, Kimi, GLM, Groq, Mistral, Together AI, Perplexity, Cerebras, Azure OpenAI, Google Vertex AI, Ollama, LM Studio, and more
@@ -60,16 +143,16 @@ claudex5 -p "너는 누구야? 한 문장으로 답해줘."
 - **TUI dashboard** — Real-time profile health, metrics, logs, and quick-launch
 - **Self-update** — `claudex update` downloads the latest release from GitHub
 
-## Installation
+## General Claudex Installation
 
 ```bash
-# One-liner (Linux / macOS)
+# Upstream one-liner (Linux / macOS)
 curl -fsSL https://raw.githubusercontent.com/StringKe/claudex/main/install.sh | bash
 
-# From source
+# Upstream from source
 cargo install --git https://github.com/StringKe/claudex
 
-# Or download from GitHub Releases
+# Upstream releases
 # https://github.com/StringKe/claudex/releases
 ```
 
@@ -77,9 +160,9 @@ cargo install --git https://github.com/StringKe/claudex
 
 - macOS (Intel / Apple Silicon) or Linux (x86_64 / ARM64)
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed
-- Windows: download pre-built binary from [Releases](https://github.com/StringKe/claudex/releases)
+- Windows: upstream Claudex provides pre-built binaries from [Releases](https://github.com/StringKe/claudex/releases)
 
-## Quick Start
+## General Claudex Commands
 
 ```bash
 # 1. Initialize config
