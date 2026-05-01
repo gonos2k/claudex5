@@ -289,7 +289,7 @@ fn default_claudex5_args(args: Vec<OsString>) -> Vec<OsString> {
     rewritten.push("run".into());
     rewritten.push("codex-sub".into());
     rewritten.push("--setting-sources".into());
-    rewritten.push("project,local".into());
+    rewritten.push("user,project,local".into());
     rewritten.extend(args.into_iter().skip(1));
     rewritten
 }
@@ -360,7 +360,7 @@ mod tests {
                 "run",
                 "codex-sub",
                 "--setting-sources",
-                "project,local"
+                "user,project,local"
             ])
         );
     }
@@ -375,7 +375,7 @@ mod tests {
                 "run",
                 "codex-sub",
                 "--setting-sources",
-                "project,local",
+                "user,project,local",
                 "-p",
                 "hi"
             ])

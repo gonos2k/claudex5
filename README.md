@@ -42,7 +42,7 @@ Claudex is a multi-provider proxy. Claudex5 is intentionally narrower: it is mea
 | Default model | Profile-dependent | `gpt-5.5` |
 | Auth path | API keys and many OAuth providers | ChatGPT/Codex OAuth subscription by default |
 | Config requirement | Usually needs a profile in config | No local `claudex.toml` needed for the default path |
-| Claude settings | Uses normal Claude settings unless arguments are passed | Default invocation passes `--setting-sources project,local` to avoid incompatible global plugins |
+| Claude settings | Uses normal Claude settings unless arguments are passed | Default invocation passes `--setting-sources user,project,local` so user skills still load |
 | Tool schema handling | Upstream behavior | Normalizes empty object tool schemas for OpenAI Responses compatibility |
 
 The original `claudex` behavior is still present in the codebase. The new `claudex5` binary is the opinionated, single-purpose entry point.
@@ -109,7 +109,7 @@ claudex5 profile list
 The default `claudex5 ...` form is equivalent to:
 
 ```bash
-claudex run codex-sub --setting-sources project,local ...
+claudex run codex-sub --setting-sources user,project,local ...
 ```
 
 ## Troubleshooting
@@ -122,7 +122,9 @@ claudex5 auth refresh codex-sub
 claudex5 auth login openai --profile codex-sub --force
 ```
 
-If you see an OpenAI error about an MCP tool schema, use the default `claudex5` command instead of manually running `claudex run ...`. The default path excludes global Claude settings with `--setting-sources project,local`, which avoids unrelated global plugins such as Firebase MCP tools.
+If skills do not appear, make sure you are on the latest Claudex5 build. The default path intentionally includes user settings with `--setting-sources user,project,local` so `~/.claude/skills` can load.
+
+If you see an OpenAI error about an MCP tool schema, update Claudex5 first. This fork normalizes empty object tool schemas before forwarding requests to OpenAI Responses.
 
 Proxy logs are written under the Claudex runtime cache, for example on macOS:
 
